@@ -1,3 +1,5 @@
+import random
+import time
 import unittest
 
 from adderbox import folder
@@ -87,3 +89,96 @@ class TestFolder(unittest.TestCase):
             container.discard(val)
         self.assertEqual(8, len(container))
         self.assertEqual([0, 0, 1, 1, 2, 3, 6, 7], list(container))
+
+
+class TestSkipList(unittest.TestCase):
+
+    def test_empty_construct(self) -> None:
+        mapping = folder.SkipList[int, bool]()
+
+        self.assertEqual(0, len(mapping))
+        self.assertEqual([], list(mapping))
+        self.assertTrue(1 not in mapping)
+
+    def test_membership_check(self) -> None:
+        mapping = folder.SkipList((i, i) for i in range(2))
+
+        self.assertEqual(2, len(mapping))
+        self.assertTrue(0 in mapping)
+        self.assertTrue(2 not in mapping)
+
+    def test_basic_operations(self) -> None:
+        mapping = folder.SkipList[int, int]()
+
+        for num in range(8):
+            mapping[num] = num
+        for num in range(4):
+            del mapping[num * 2 + 1]
+
+        self.assertEqual(4, len(mapping))
+        self.assertEqual({i: i for i in [0, 2, 4, 6]}, dict(mapping))
+
+        with self.assertRaises(KeyError):
+            del mapping[8]
+
+    def test_sorted_order(self) -> None:
+        mapping = folder.SkipList((i, i) for i in reversed(range(8)))
+
+        self.assertEqual(list(range(8)), list(mapping))
+
+    def test_none_as_value(self) -> None:
+        mapping = folder.SkipList[int, None]()
+        mapping[0] = None
+
+        self.assertEqual(1, len(mapping))
+        self.assertEqual([0], list(mapping))
+        self.assertIsNone(mapping[0])
+
+    def test_inverse_order(self) -> None:
+        mapping = folder.SkipListBase(
+            ((i, None) for i in range(8)),
+            by=lambda x: -x,
+        )
+
+        self.assertEqual(8, len(mapping))
+        self.assertEqual(list(reversed(range(8))), list(mapping))
+
+    def test_heavy_random_insert(self) -> None:
+        mapping = folder.SkipList[int, int]()
+        pivot: dict[int, int] = {}
+
+        for _ in range(0x400):
+            val = random.randint(0, 0x400)
+            mapping[val] = val
+            pivot[val] = val
+
+        self.assertEqual(len(pivot), len(mapping))
+        self.assertEqual(sorted(pivot), list(mapping))
+
+    @unittest.skip("for-benchmark")
+    def test_query_complexity(self) -> None:
+
+        def track_time(results, func):
+            start = time.monotonic()
+            func()
+            elapsed = time.monotonic() - start
+            results.append(elapsed)
+
+        for size in range(0x0, 0x10000, 0x1000):
+            if size == 0:
+                continue
+            values = list(range(size))
+            random.shuffle(values)
+
+            results = []
+            for _ in range(0x10):
+                mapping = folder.SkipList((v, None) for v in values)
+
+                def run_once():
+                    for _ in range(0x4000):
+                        _ = mapping[random.randint(0, size - 1)]
+
+                track_time(results, run_once)
+
+            # expect O(log n) complexity
+            print(f"size: 0x{size:04x} records, total: {sum(results):.4f} sec")

@@ -16,7 +16,10 @@ from collections.abc import (
     MutableSet,
     Sequence,
 )
+import random
+from typing import Any
 from typing import assert_never
+from typing import cast
 from typing import NamedTuple
 from typing import Protocol
 
@@ -533,3 +536,267 @@ class MultiSet[K: Cmp](MutableSet[K]):
         self._store[item] -= 1
         if self._store[item] == 0:
             del self._store[item]
+
+
+def _eq[T: Cmp](a: T, b: T) -> bool:
+    """
+    Check if two items are equal by less than operator.
+
+    Useful since that all Python object has operator== implemented by default,
+    but it's defined by object identity, not object value.
+
+    It's only semantically correct if the relation is a total order.
+    """
+    return not a < b and not b < a
+
+
+class _SkipNode[K: Any, V: Any]:
+    """Node type in the skip list."""
+
+    def __init__(
+        self,
+        key: K | None = None,
+        val: V | None = None,
+        *,
+        down: _SkipNode[K, V] | None = None,
+    ) -> None:
+        self.key: K | None = key
+        """key of the node, not used in sentinel nodes"""
+
+        self.val: V | None = val
+        """value of the node, only used at bottom level"""
+
+        self.do: _SkipNode[K, V] | None = down
+        """down pointer, None for bottom nodes"""
+
+        self.ri: _SkipNode[K, V] | None = None
+        """right pointer, None for last node at each level"""
+
+    def __repr__(self) -> str:
+        key_repr = repr(self.key) if self.key is not None else "-inf"
+        return f"Node({key_repr})"
+
+
+class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
+    """
+    A simple mapping container by skip list.
+
+    Compare keys by the given projection function.
+
+    Skip list is a probabilistic data structure by William Pugh.
+    It allows average O(log n) read-write and use average O(n) space.
+    Roughly equivalent to balanced BST, it ensures ordered iteration.
+    """
+
+    # Implementation notes:
+    # For each level, we use a (singly) linked list to store the nodes.
+    # Each node has a down-link to the node at the next level.
+    # Singly linked list make insert/delete a little bit harder, but it reduce
+    # the need for graph traversal during cleanup, either by __del__ or by GC.
+    #
+    # Sample structure for a height-3 skip list
+    # L2: sentinel     > 3           (> None)
+    # L1: sentinel     > 3       > 9 (> None)
+    # L0: sentinel > 1 > 3  > 7  > 9 (> None)
+    #
+    # Sample structure for a empty (height-1) skip list
+    # L0: sentinel (> None)
+    #
+    # It's easier to think the sentinel (with key None) as negative infinity,
+    # and the None as positive infinity.
+    #
+    # Invariants:
+    # - The head node is always the top left (sentinel) node
+    # - Bottom level (L0) always exists, even when container is empty
+    # - node.do (down-link) is None for bottom nodes, is not None otherwise
+    # - node.val is not None for bottom (non-sentinel) nodes, is None otherwise
+    # - node.key is None for sentinel nodes, is not None otherwise
+
+    def __init__(
+        self,
+        items: Iterable[tuple[K, V]] = [],
+        *,
+        by: Callable[[K], C],
+    ) -> None:
+        self._head: _SkipNode[K, V] = _SkipNode[K, V]()
+        """head node at top left"""
+
+        self._size: int = 0
+        """number of items in the container"""
+
+        self._proj: Callable[[K], C] = by
+        """projection function to compare keys"""
+
+        for key, val in items:
+            self.__setitem__(key, val)
+
+    @staticmethod
+    def _random_level() -> int:
+        __factor = 4  # roughly 1/4 chance to stop at each
+
+        level = 0
+        while random.choice(range(__factor)) == 0:
+            level += 1
+        else:
+            return level
+
+    def _height(self) -> int:
+        """Return the height of the skip list."""
+
+        height = 1
+        row = self._head
+        while row.do is not None:
+            height += 1
+            row = row.do
+
+        return height
+
+    def _fill_head(self, height: int) -> None:
+        """Ensure there are at least height levels in the skip list."""
+
+        assert height > 0
+
+        row = self._head
+        for _ in range(self._height(), height):
+            node = _SkipNode[K, V](down=row)
+            row = node
+        self._head = row
+
+    def _clean_head(self) -> None:
+        """Remove empty levels from the top."""
+
+        row = self._head
+        # we always keep the bottom level, so check by down link here
+        while row.do is not None and row.ri is None:
+            row = row.do
+        self._head = row
+
+    def _traverse(self, key: K) -> tuple[
+        tuple[_SkipNode[K, V], _SkipNode[K, V] | None],
+        dict[int, tuple[_SkipNode[K, V], _SkipNode[K, V] | None]],
+    ]:
+        """
+        Return target-pair at bottom and at each level.
+
+        The target-pair consists of the last node with key < target key (if the "key" exists),
+        and the first node with key >= target key (if the "node" exists).
+        """
+
+        by = self._proj
+        tracked: dict[int, tuple[_SkipNode[K, V], _SkipNode[K, V] | None]] = {}
+        level = self._height() - 1
+        cur: _SkipNode[K, V] | None = self._head
+
+        assert level >= 0
+        assert cur is not None
+
+        # Reach the node that have key < target key as much as possible at each level.
+        # The sentinel nodes can be thought as node with negative infinity key.
+        while cur is not None:
+            nex: _SkipNode[K, V] | None = cur.ri
+            while nex is not None and by(cast(K, nex.key)) < by(key):
+                cur, nex = nex, nex.ri
+            tracked[level] = (cur, cur.ri)
+
+            cur, level = cur.do, level - 1
+
+        assert level == -1
+        assert cur is None
+
+        return tracked[0], tracked
+
+    def __len__(self) -> int:
+        return self._size
+
+    def __iter__(self) -> Iterable[K]:
+        row = self._head
+        while row.do is not None:
+            row = row.do
+
+        cur = row.ri  # now at bottom level
+        while cur is not None:
+            yield cast(K, cur.key)
+            cur = cur.ri
+
+    def __setitem__(self, key: K, val: V) -> None:
+        try:
+            self.__delitem__(key)
+        except KeyError:
+            pass
+
+        item_level = self._random_level()
+        self._fill_head(item_level + 1)
+
+        _, tracked = self._traverse(key)
+
+        inserted: list[_SkipNode[K, V]] = []
+        for idx in range(0, item_level + 1):
+            pre, nex = tracked[idx]
+
+            node = _SkipNode[K, V](key)
+            pre.ri, node.ri = node, nex
+
+            inserted.append(node)
+
+        for idx in range(1, item_level + 1):
+            inserted[idx].do = inserted[idx - 1]
+
+        inserted[0].val = val
+
+        self._size += 1
+
+    def __getitem__(self, key: K) -> V:
+        (_, cur), _ = self._traverse(key)
+        by = self._proj
+
+        if cur is None or not _eq(by(cast(K, cur.key)), by(key)):
+            raise KeyError("key not found")
+
+        # do not check against None so we support using None as value type V.
+        return cast(V, cur.val)
+
+    def __delitem__(self, key: K):
+        (_, cur), tracked = self._traverse(key)
+        by = self._proj
+
+        if cur is None or not _eq(by(cast(K, cur.key)), by(key)):
+            raise KeyError("key not found")
+
+        for pre, cur in tracked.values():
+            if cur is None or not _eq(by(cast(K, cur.key)), by(key)):
+                continue
+            pre.ri = cur.ri
+
+        self._size -= 1
+        self._clean_head()
+
+    def __repr__(self) -> str:
+        texts: list[str] = []
+        texts.append(f"size: {self._size}, height: {self._height()}")
+
+        def format(row: _SkipNode[K, V]) -> str:
+            results: list[str] = []
+            cur = row.ri
+            while cur is not None:
+                results.append(repr(cur.key))
+                cur = cur.ri
+            return " ".join(results)
+
+        row: _SkipNode[K, V] | None = self._head
+        level = self._height() - 1
+        while row is not None:
+            texts.append(f"level {level}: {format(row)}")
+            row, level = row.do, level - 1
+
+        return "\n".join(texts)
+
+
+class SkipList[K: Cmp, V: Any](SkipListBase[K, V, K]):
+    """
+    A simple mapping container by skip list.
+
+    Just like SkipListBase, but compare keys by the key itself directly.
+    """
+
+    def __init__(self, items: Iterable[tuple[K, V]] = []) -> None:
+        super().__init__(items, by=lambda x: x)
