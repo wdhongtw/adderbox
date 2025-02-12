@@ -559,6 +559,7 @@ class _SkipNode[K: Any, V: Any]:
         val: V | None = None,
         *,
         down: _SkipNode[K, V] | None = None,
+        size: int = 1,
     ) -> None:
         self.key: K | None = key
         """key of the node, not used in sentinel nodes"""
@@ -572,9 +573,13 @@ class _SkipNode[K: Any, V: Any]:
         self.ri: _SkipNode[K, V] | None = None
         """right pointer, None for last node at each level"""
 
+        self.size: int = size
+        """size of the sub-tree rooted at this node"""
+
     def __repr__(self) -> str:
         key_repr = repr(self.key) if self.key is not None else "-inf"
-        return f"Node({key_repr})"
+        upper = repr(self.ri.key) if self.ri is not None else "+inf"
+        return f"Node[key={key_repr}, right={upper}, size={self.size}]"
 
 
 class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
@@ -621,9 +626,6 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
         self._head: _SkipNode[K, V] = _SkipNode[K, V]()
         """head node at top left"""
 
-        self._size: int = 0
-        """number of items in the container"""
-
         self._proj: Callable[[K], C] = by
         """projection function to compare keys"""
 
@@ -639,6 +641,21 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
             level += 1
         else:
             return level
+
+    def _size_in(self, down: _SkipNode[K, V], bound: K | None) -> int:
+        """Return the size of some tree, by down link and key bound."""
+
+        by = self._proj
+        # -inf less than all values, and all values less than +inf
+        is_good = lambda key: key is None or bound is None or by(key) < by(bound)
+
+        size = 0
+        cur: _SkipNode[K, V] | None = down
+        while cur is not None and is_good(cur.key):
+            size += cur.size
+            cur = cur.ri
+
+        return size
 
     def _height(self) -> int:
         """Return the height of the skip list."""
@@ -658,7 +675,7 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
 
         row = self._head
         for _ in range(self._height(), height):
-            node = _SkipNode[K, V](down=row)
+            node = _SkipNode[K, V](down=row, size=self._size_in(row, None))
             row = node
         self._head = row
 
@@ -706,7 +723,8 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
         return tracked[0], tracked
 
     def __len__(self) -> int:
-        return self._size
+        # sentinel node is not counted
+        return self._size_in(self._head, None) - 1
 
     def __iter__(self) -> Iterable[K]:
         row = self._head
@@ -724,26 +742,29 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
         except KeyError:
             pass
 
-        item_level = self._random_level()
-        self._fill_head(item_level + 1)
+        half = self._random_level() + 1
+        self._fill_head(half)
 
         _, tracked = self._traverse(key)
 
-        inserted: list[_SkipNode[K, V]] = []
-        for idx in range(0, item_level + 1):
+        inserted: dict[int, _SkipNode[K, V]] = {}
+        for idx in range(half):
             pre, nex = tracked[idx]
 
-            node = _SkipNode[K, V](key)
+            down = inserted[idx - 1] if idx > 0 else None
+            hi = nex.key if nex is not None else None
+            size = self._size_in(down, hi) if down is not None else 1
+
+            node = _SkipNode[K, V](key, down=down, size=size)
             pre.ri, node.ri = node, nex
 
-            inserted.append(node)
+            inserted[idx] = node
 
-        for idx in range(1, item_level + 1):
-            inserted[idx].do = inserted[idx - 1]
+        for idx, (pre, _) in tracked.items():
+            splitted = inserted[idx].size if idx in inserted else 0
+            pre.size = pre.size + 1 - splitted
 
         inserted[0].val = val
-
-        self._size += 1
 
     def __getitem__(self, key: K) -> V:
         (_, cur), _ = self._traverse(key)
@@ -762,17 +783,22 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
         if cur is None or not _eq(by(cast(K, cur.key)), by(key)):
             raise KeyError("key not found")
 
-        for pre, cur in tracked.values():
+        joined: dict[int, int] = {}
+        for idx, (pre, cur) in tracked.items():
             if cur is None or not _eq(by(cast(K, cur.key)), by(key)):
+                joined[idx] = 0
                 continue
             pre.ri = cur.ri
+            joined[idx] = cur.size
 
-        self._size -= 1
+        for idx, (pre, _) in tracked.items():
+            pre.size = pre.size - 1 + joined[idx]
+
         self._clean_head()
 
     def __repr__(self) -> str:
         texts: list[str] = []
-        texts.append(f"size: {self._size}, height: {self._height()}")
+        texts.append(f"size: {self.__len__()}, height: {self._height()}")
 
         def format(row: _SkipNode[K, V]) -> str:
             results: list[str] = []
