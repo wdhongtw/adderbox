@@ -417,19 +417,19 @@ class RbTree[K: Cmp](Container[K], Reversible[K]):
         return _rb_traverse(self._root, reverse=reverse)
 
 
-class _None:
-    """Customized None type to avoid type collision"""
-
-
 class ByKey[K: Cmp, V](NamedTuple):
     """
     Key value type that support comparison by key only
 
     Useful for building a mapping upon a primitive container.
+
+    It's not possible to use None as value type here.
     """
 
+    # TODO: support type hint to ensure value type is not None
+
     key: K
-    value: V | _None
+    value: V | None
 
     def __lt__(self, other) -> bool:
         if not isinstance(other, ByKey):
@@ -439,11 +439,11 @@ class ByKey[K: Cmp, V](NamedTuple):
     @classmethod
     def only(cls, key: K) -> ByKey[K, V]:
         """Construct a pair that only contains key, useful for comparing."""
-        return cls(key, cast(V, _None()))
+        return cls(key, cast(V, None))
 
     def val(self) -> V:
         """Convenient value getter to ensure existence"""
-        if isinstance(self.value, _None):
+        if self.value is None:
             raise ValueError("expect value but got None")
         return self.value
 
