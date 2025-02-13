@@ -164,6 +164,18 @@ class Cmp(Protocol):
     def __lt__(self, other, /) -> bool: ...
 
 
+def _eq[T: Cmp](a: T, b: T) -> bool:
+    """
+    Check if two items are equal by less than operator.
+
+    Useful since that all Python object has operator== implemented by default,
+    but it's defined by object identity, not object value.
+
+    It's only semantically correct if the relation is a total order.
+    """
+    return not a < b and not b < a
+
+
 class C(enum.Enum):
     """Color enum for RB Tree"""
 
@@ -446,18 +458,6 @@ class ByKey[K: Cmp, V](NamedTuple):
         if self.value is None:
             raise ValueError("expect value but got None")
         return self.value
-
-
-def _eq[T: Cmp](a: T, b: T) -> bool:
-    """
-    Check if two items are equal by less than operator.
-
-    Useful since that all Python object has operator== implemented by default,
-    but it's defined by object identity, not object value.
-
-    It's only semantically correct if the relation is a total order.
-    """
-    return not a < b and not b < a
 
 
 class _SkipNode[K: Any, V: Any]:
