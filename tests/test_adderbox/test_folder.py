@@ -61,35 +61,6 @@ class TestFolder(unittest.TestCase):
             tree.remove(val)
         self.assertEqual([0, 0, 1, 1, 2, 3, 6, 7], list(tree))
 
-    def test_tree_map(self) -> None:
-
-        container = folder.TreeMap({1: "2", 3: "4"}.items())
-
-        self.assertEqual("2", container[1])
-        self.assertEqual([1, 3], list(iter(container)))
-
-        del container[3]
-        container[1] = "5"
-        container[0] = "2"
-        self.assertEqual([0, 1], list(container))
-
-    def test_multi_set(self) -> None:
-
-        container = folder.MultiSet(reversed(range(8)))
-
-        self.assertTrue(2 in container)
-        self.assertTrue(9 not in container)
-
-        self.assertEqual(list(range(8)), list(container))
-
-        for val in range(4):
-            container.add(val)
-        self.assertEqual(12, len(container))
-        for val in range(2, 6):
-            container.discard(val)
-        self.assertEqual(8, len(container))
-        self.assertEqual([0, 0, 1, 1, 2, 3, 6, 7], list(container))
-
 
 class TestSkipList(unittest.TestCase):
 

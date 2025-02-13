@@ -13,7 +13,6 @@ from collections.abc import (
     Iterable,
     Iterator,
     MutableMapping,
-    MutableSet,
     Sequence,
 )
 import random
@@ -412,130 +411,31 @@ class _None:
     """Customized None type to avoid type collision"""
 
 
-class _ByKey[K: Cmp, V](NamedTuple):
-    """Key value type that support comparison by key only"""
+class ByKey[K: Cmp, V](NamedTuple):
+    """
+    Key value type that support comparison by key only
+
+    Useful for building a mapping upon a primitive container.
+    """
 
     key: K
     value: V | _None
 
     def __lt__(self, other) -> bool:
-        if not isinstance(other, _ByKey):
+        if not isinstance(other, ByKey):
             return NotImplemented
         return self.key < other.key
 
     @classmethod
-    def only(cls, key: K) -> _ByKey:
+    def only(cls, key: K) -> ByKey[K, V]:
         """Construct a pair that only contains key, useful for comparing."""
-        return cls(key, _None())
+        return cls(key, cast(V, _None()))
 
     def val(self) -> V:
         """Convenient value getter to ensure existence"""
         if isinstance(self.value, _None):
             raise ValueError("expect value but got None")
         return self.value
-
-
-class TreeMap[K: Cmp, V](MutableMapping[K, V]):
-    """
-    TreeMap container, supporting MutableMapping.
-
-    key must support "<" (__lt__), and it assumed that
-    if not (a < b) and not (b < a), then a == b.
-    """
-
-    def __init__(self, items: Iterable[tuple[K, V]] = ()) -> None:
-        self._root: _RbTree[_ByKey[K, V]] = _Nil()
-        self._size: int = 0
-
-        for k, v in items:
-            self[k] = v
-
-    def __setitem__(self, key: K, value: V) -> None:
-        node = _rb_member(self._root, _ByKey.only(key))
-        if not isinstance(node, _Nil):
-            self._del(key)
-
-        self._root = _rb_ins_root(self._root, _ByKey(key, value))
-        self._size += 1
-
-    def __getitem__(self, key: K) -> V:
-        node = _rb_member(self._root, _ByKey.only(key))
-        if isinstance(node, _Nil):
-            raise KeyError("no such key in the map")
-
-        return node.item.val()
-
-    def __delitem__(self, key: K) -> None:
-        node = _rb_member(self._root, _ByKey.only(key))
-        if isinstance(node, _Nil):
-            raise KeyError("no such key in the map")
-
-        self._del(key)
-
-    def _del(self, key: K) -> None:
-        self._root = _rb_del(self._root, _ByKey.only(key))
-        self._size -= 1
-
-    def __contains__(self, key: K) -> bool:  # type: ignore[override]
-        node = _rb_member(self._root, _ByKey.only(key))
-        return not isinstance(node, _Nil)
-
-    def __iter__(self) -> Iterator[K]:
-        yield from (p.key for p in _rb_traverse(self._root))
-
-    def __reversed__(self) -> Iterator[K]:
-        yield from (p.key for p in _rb_traverse(self._root, reverse=True))
-
-    def __len__(self) -> int:
-        return self._size
-
-    def __repr__(self) -> str:
-        return f"TreeMap({dict((k, self[k]) for k in self)})"
-
-
-class MultiSet[K: Cmp](MutableSet[K]):
-    """
-    MultiSet(OrderedList), support Container and insert, delete.
-
-    item must support "<" (__lt__), and it assumed that
-    if not (a < b) and not (b < a), then a == b.
-
-    Use next(container) to get the smallest item, if any.
-    """
-
-    def __init__(self, items: Iterable[K] = ()) -> None:
-        self._store: TreeMap[K, int] = TreeMap()
-        self._size: int = 0
-
-        for item in items:
-            self.add(item)
-
-    def __contains__(self, key: K) -> bool:
-        return key in self._store
-
-    def __iter__(self) -> Iterator[K]:
-        yield from (k for k in self._store for _ in range(self._store[k]))
-
-    def __reversed__(self) -> Iterator[K]:
-        yield from (k for k in reversed(self._store) for _ in range(self._store[k]))
-
-    def __len__(self) -> int:
-        return self._size
-
-    def __repr__(self) -> str:
-        return f"MultiSet({list(self)})"
-
-    def add(self, item: K) -> None:
-        self._size += 1
-        self._store[item] = self._store.get(item, 0) + 1
-
-    def discard(self, item: K) -> None:
-        if item not in self._store:
-            return
-        self._size -= 1
-        self._store[item] -= 1
-        if self._store[item] == 0:
-            del self._store[item]
 
 
 def _eq[T: Cmp](a: T, b: T) -> bool:
