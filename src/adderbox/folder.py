@@ -10,9 +10,11 @@ import dataclasses
 import enum
 from collections.abc import (
     Callable,
+    Container,
     Iterable,
     Iterator,
     MutableMapping,
+    Reversible,
     Sequence,
 )
 import random
@@ -369,42 +371,50 @@ def _rb_fuse[K: Cmp](left: _RbTree[K], right: _RbTree[K]) -> _RbTree[K]:
             raise AssertionError("unexpected rb-tree structure")
 
 
-class RbTree[K: Cmp]:
+class RbTree[K: Cmp](Container[K], Reversible[K]):
     """
     A generic RB Tree which support Container, Sized and Iterable ...
+
+    It's a sorted container with O(log n) access time.
+    Useful for build a sorted container / mapping that need iteration from both ends.
+
+    Relative order of repetitive elements is not guaranteed.
+    Repetitive(equality) is defined by less than operator.
     """
 
     def __init__(self, items: Iterable[K] = ()) -> None:
         self._root: _RbTree[K] = _Nil()
-        self._size: int = 0
 
         for item in items:
             self.add(item)
 
     def __iter__(self) -> Iterator[K]:
-        yield from (k for k in _rb_traverse(self._root))
+        return self.iter()
 
     def __reversed__(self) -> Iterator[K]:
-        yield from (k for k in _rb_traverse(self._root, reverse=True))
+        return self.iter(reverse=True)
 
     def __contains__(self, item: K) -> bool:
-        node = _rb_member(self._root, item)
-        return False if isinstance(node, _Nil) else True
-
-    def __len__(self) -> int:
-        return self._size
+        return self.find(item) is not None
 
     def add(self, item: K) -> None:
         """Insert a element into the tree"""
         self._root = _rb_ins_root(self._root, item)
-        self._size += 1
 
     def remove(self, item: K) -> None:
         """Remove a element from the tree, throws if no such item."""
         if item not in self:
             raise ValueError("item not in container")
         self._root = _rb_del(self._root, item)
-        self._size -= 1
+
+    def find(self, item: K) -> K | None:
+        """Return an item if there is at least one equal to given item."""
+        node = _rb_member(self._root, item)
+        return None if isinstance(node, _Nil) else node.item
+
+    def iter(self, reverse: bool = False) -> Iterator[K]:
+        """Return a iterator to traverse the tree."""
+        return _rb_traverse(self._root, reverse=reverse)
 
 
 class _None:
