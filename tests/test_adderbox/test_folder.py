@@ -61,70 +61,71 @@ class TestFolder(unittest.TestCase):
             tree.remove(val)
         self.assertEqual([0, 0, 1, 1, 2, 3, 6, 7], list(tree))
 
+        self.assertIsNone(tree.find(8))
+        self.assertEqual(2, tree.find(2))
+
 
 class TestSkipList(unittest.TestCase):
 
     def test_empty_construct(self) -> None:
-        mapping = folder.SkipList[int, bool]()
+        items = folder.SkipList[int, int]()
 
-        self.assertEqual(0, len(mapping))
-        self.assertEqual([], list(mapping))
-        self.assertTrue(1 not in mapping)
+        self.assertEqual(0, len(items))
+        self.assertEqual([], list(items))
+        self.assertTrue(1 not in items)
 
     def test_membership_check(self) -> None:
-        mapping = folder.SkipList((i, i) for i in range(2))
+        items = folder.SkipList(range(2))
 
-        self.assertEqual(2, len(mapping))
-        self.assertTrue(0 in mapping)
-        self.assertTrue(2 not in mapping)
+        self.assertEqual(2, len(items))
+        self.assertTrue(0 in items)
+        self.assertTrue(2 not in items)
 
     def test_basic_operations(self) -> None:
-        mapping = folder.SkipList[int, int]()
+        items = folder.SkipList[int, int]()
 
         for num in range(8):
-            mapping[num] = num
+            items.add(num)
         for num in range(4):
-            del mapping[num * 2 + 1]
+            items.remove(num * 2 + 1)
+        for num in range(2):
+            items.add(num)
 
-        self.assertEqual(4, len(mapping))
-        self.assertEqual({i: i for i in [0, 2, 4, 6]}, dict(mapping))
+        self.assertEqual(6, len(items))
+        self.assertEqual([0, 0, 1, 2, 4, 6], list(items))
 
-        with self.assertRaises(KeyError):
-            del mapping[8]
+        with self.assertRaises(ValueError):
+            items.remove(8)
 
     def test_sorted_order(self) -> None:
-        mapping = folder.SkipList((i, i) for i in reversed(range(8)))
+        items = folder.SkipList(reversed(range(8)))
 
-        self.assertEqual(list(range(8)), list(mapping))
+        self.assertEqual(list(range(8)), list(items))
 
     def test_none_as_value(self) -> None:
-        mapping = folder.SkipList[int, None]()
-        mapping[0] = None
+        items = folder.SkipList[None, int](key=lambda _: 0)
+        items.add(None)
 
-        self.assertEqual(1, len(mapping))
-        self.assertEqual([0], list(mapping))
-        self.assertIsNone(mapping[0])
+        self.assertEqual(1, len(items))
+        self.assertEqual([None], list(items))
 
     def test_inverse_order(self) -> None:
-        mapping = folder.SkipListBase(
-            ((i, None) for i in range(8)),
-            by=lambda x: -x,
-        )
+        items = folder.SkipList(range(8), key=lambda x: -x)
 
-        self.assertEqual(8, len(mapping))
-        self.assertEqual(list(reversed(range(8))), list(mapping))
+        self.assertEqual(8, len(items))
+        self.assertEqual(list(reversed(range(8))), list(items))
 
     def test_heavy_random_insert(self) -> None:
-        mapping = folder.SkipList[int, int]()
-        pivot: dict[int, int] = {}
+        items = folder.SkipList[int, int]()
+        pivot: list[int] = []
 
         for _ in range(0x400):
             val = random.randint(0, 0x400)
-            mapping[val] = val
-            pivot[val] = val
+            items.add(val)
+            pivot.append(val)
 
-        self.assertEqual(len(pivot), len(mapping))
-        self.assertEqual(sorted(pivot), list(mapping))
+        self.assertEqual(len(pivot), len(items))
+        self.assertEqual(sorted(pivot), list(items))
 
     @unittest.skip("for-benchmark")
     def test_query_complexity(self) -> None:
@@ -143,11 +144,11 @@ class TestSkipList(unittest.TestCase):
 
             results = []
             for _ in range(0x10):
-                mapping = folder.SkipList((v, None) for v in values)
+                items = folder.SkipList(values)
 
                 def run_once():
                     for _ in range(0x4000):
-                        _ = mapping[random.randint(0, size - 1)]
+                        _ = items.find(random.randint(0, size - 1))
 
                 track_time(results, run_once)
 
