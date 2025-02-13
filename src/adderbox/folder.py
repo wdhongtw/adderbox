@@ -10,10 +10,11 @@ import dataclasses
 import enum
 from collections.abc import (
     Callable,
+    Collection,
+    Container,
     Iterable,
     Iterator,
-    MutableMapping,
-    MutableSet,
+    Reversible,
     Sequence,
 )
 import random
@@ -161,6 +162,18 @@ class Cmp(Protocol):
     """Support less than comparison."""
 
     def __lt__(self, other, /) -> bool: ...
+
+
+def _eq[T: Cmp](a: T, b: T) -> bool:
+    """
+    Check if two items are equal by less than operator.
+
+    Useful since that all Python object has operator== implemented by default,
+    but it's defined by object identity, not object value.
+
+    It's only semantically correct if the relation is a total order.
+    """
+    return not a < b and not b < a
 
 
 class C(enum.Enum):
@@ -370,223 +383,120 @@ def _rb_fuse[K: Cmp](left: _RbTree[K], right: _RbTree[K]) -> _RbTree[K]:
             raise AssertionError("unexpected rb-tree structure")
 
 
-class RbTree[K: Cmp]:
+class RbTree[K: Cmp](Container[K], Reversible[K]):
     """
     A generic RB Tree which support Container, Sized and Iterable ...
+
+    It's a sorted container with O(log n) access time.
+    Useful for build a sorted container / mapping that need iteration from both ends.
+
+    Relative order of repetitive elements is not guaranteed.
+    Repetitive(equality) is defined by less than operator.
     """
 
     def __init__(self, items: Iterable[K] = ()) -> None:
         self._root: _RbTree[K] = _Nil()
-        self._size: int = 0
 
         for item in items:
             self.add(item)
 
     def __iter__(self) -> Iterator[K]:
-        yield from (k for k in _rb_traverse(self._root))
+        return self.iter()
 
     def __reversed__(self) -> Iterator[K]:
-        yield from (k for k in _rb_traverse(self._root, reverse=True))
+        return self.iter(reverse=True)
 
     def __contains__(self, item: K) -> bool:
-        node = _rb_member(self._root, item)
-        return False if isinstance(node, _Nil) else True
-
-    def __len__(self) -> int:
-        return self._size
+        return self.find(item) is not None
 
     def add(self, item: K) -> None:
         """Insert a element into the tree"""
         self._root = _rb_ins_root(self._root, item)
-        self._size += 1
 
     def remove(self, item: K) -> None:
         """Remove a element from the tree, throws if no such item."""
         if item not in self:
             raise ValueError("item not in container")
         self._root = _rb_del(self._root, item)
-        self._size -= 1
+
+    def find(self, item: K) -> K | None:
+        """Return an item if there is at least one equal to given item."""
+        node = _rb_member(self._root, item)
+        return None if isinstance(node, _Nil) else node.item
+
+    def iter(self, reverse: bool = False) -> Iterator[K]:
+        """Return a iterator to traverse the tree."""
+        return _rb_traverse(self._root, reverse=reverse)
 
 
-class _None:
-    """Customized None type to avoid type collision"""
+class ByKey[K: Cmp, V](NamedTuple):
+    """
+    Key value type that support comparison by key only
 
+    Useful for building a mapping upon a primitive container.
 
-class _ByKey[K: Cmp, V](NamedTuple):
-    """Key value type that support comparison by key only"""
+    It's not possible to use None as value type here.
+    """
+
+    # TODO: support type hint to ensure value type is not None
 
     key: K
-    value: V | _None
+    value: V | None
 
     def __lt__(self, other) -> bool:
-        if not isinstance(other, _ByKey):
+        if not isinstance(other, ByKey):
             return NotImplemented
         return self.key < other.key
 
     @classmethod
-    def only(cls, key: K) -> _ByKey:
+    def only(cls, key: K) -> ByKey[K, V]:
         """Construct a pair that only contains key, useful for comparing."""
-        return cls(key, _None())
+        return cls(key, cast(V, None))
 
     def val(self) -> V:
         """Convenient value getter to ensure existence"""
-        if isinstance(self.value, _None):
+        if self.value is None:
             raise ValueError("expect value but got None")
         return self.value
 
 
-class TreeMap[K: Cmp, V](MutableMapping[K, V]):
-    """
-    TreeMap container, supporting MutableMapping.
-
-    key must support "<" (__lt__), and it assumed that
-    if not (a < b) and not (b < a), then a == b.
-    """
-
-    def __init__(self, items: Iterable[tuple[K, V]] = ()) -> None:
-        self._root: _RbTree[_ByKey[K, V]] = _Nil()
-        self._size: int = 0
-
-        for k, v in items:
-            self[k] = v
-
-    def __setitem__(self, key: K, value: V) -> None:
-        node = _rb_member(self._root, _ByKey.only(key))
-        if not isinstance(node, _Nil):
-            self._del(key)
-
-        self._root = _rb_ins_root(self._root, _ByKey(key, value))
-        self._size += 1
-
-    def __getitem__(self, key: K) -> V:
-        node = _rb_member(self._root, _ByKey.only(key))
-        if isinstance(node, _Nil):
-            raise KeyError("no such key in the map")
-
-        return node.item.val()
-
-    def __delitem__(self, key: K) -> None:
-        node = _rb_member(self._root, _ByKey.only(key))
-        if isinstance(node, _Nil):
-            raise KeyError("no such key in the map")
-
-        self._del(key)
-
-    def _del(self, key: K) -> None:
-        self._root = _rb_del(self._root, _ByKey.only(key))
-        self._size -= 1
-
-    def __contains__(self, key: K) -> bool:  # type: ignore[override]
-        node = _rb_member(self._root, _ByKey.only(key))
-        return not isinstance(node, _Nil)
-
-    def __iter__(self) -> Iterator[K]:
-        yield from (p.key for p in _rb_traverse(self._root))
-
-    def __reversed__(self) -> Iterator[K]:
-        yield from (p.key for p in _rb_traverse(self._root, reverse=True))
-
-    def __len__(self) -> int:
-        return self._size
-
-    def __repr__(self) -> str:
-        return f"TreeMap({dict((k, self[k]) for k in self)})"
-
-
-class MultiSet[K: Cmp](MutableSet[K]):
-    """
-    MultiSet(OrderedList), support Container and insert, delete.
-
-    item must support "<" (__lt__), and it assumed that
-    if not (a < b) and not (b < a), then a == b.
-
-    Use next(container) to get the smallest item, if any.
-    """
-
-    def __init__(self, items: Iterable[K] = ()) -> None:
-        self._store: TreeMap[K, int] = TreeMap()
-        self._size: int = 0
-
-        for item in items:
-            self.add(item)
-
-    def __contains__(self, key: K) -> bool:
-        return key in self._store
-
-    def __iter__(self) -> Iterator[K]:
-        yield from (k for k in self._store for _ in range(self._store[k]))
-
-    def __reversed__(self) -> Iterator[K]:
-        yield from (k for k in reversed(self._store) for _ in range(self._store[k]))
-
-    def __len__(self) -> int:
-        return self._size
-
-    def __repr__(self) -> str:
-        return f"MultiSet({list(self)})"
-
-    def add(self, item: K) -> None:
-        self._size += 1
-        self._store[item] = self._store.get(item, 0) + 1
-
-    def discard(self, item: K) -> None:
-        if item not in self._store:
-            return
-        self._size -= 1
-        self._store[item] -= 1
-        if self._store[item] == 0:
-            del self._store[item]
-
-
-def _eq[T: Cmp](a: T, b: T) -> bool:
-    """
-    Check if two items are equal by less than operator.
-
-    Useful since that all Python object has operator== implemented by default,
-    but it's defined by object identity, not object value.
-
-    It's only semantically correct if the relation is a total order.
-    """
-    return not a < b and not b < a
-
-
-class _SkipNode[K: Any, V: Any]:
+class _Skip[T: Any]:
     """Node type in the skip list."""
 
     def __init__(
         self,
-        key: K | None = None,
-        val: V | None = None,
+        val: T | None = None,
         *,
-        down: _SkipNode[K, V] | None = None,
+        down: _Skip[T] | None = None,
         size: int = 1,
     ) -> None:
-        self.key: K | None = key
-        """key of the node, not used in sentinel nodes"""
+        self.val: T | None = val
+        """value of the node, not used in sentinel nodes"""
 
-        self.val: V | None = val
-        """value of the node, only used at bottom level"""
-
-        self.do: _SkipNode[K, V] | None = down
+        self.do: _Skip[T] | None = down
         """down pointer, None for bottom nodes"""
 
-        self.ri: _SkipNode[K, V] | None = None
+        self.ri: _Skip[T] | None = None
         """right pointer, None for last node at each level"""
 
         self.size: int = size
         """size of the sub-tree rooted at this node"""
 
     def __repr__(self) -> str:
-        key_repr = repr(self.key) if self.key is not None else "-inf"
-        upper = repr(self.ri.key) if self.ri is not None else "+inf"
-        return f"Node[key={key_repr}, right={upper}, size={self.size}]"
+        val_repr = repr(self.val) if self.val is not None else "-inf"
+        upper = repr(self.ri.val) if self.ri is not None else "+inf"
+        return f"Node[key={val_repr}, right={upper}, size={self.size}]"
 
 
-class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
+class SkipList[T: Any, C: Cmp](Collection[T]):
     """
-    A simple mapping container by skip list.
+    A generic Skip List container.
 
-    Compare keys by the given projection function.
+    It's a sorted container with O(log n) access time.
+    Useful for build a sorted container / mapping that also need efficient n-th access.
+
+    Relative order of repetitive elements is not guaranteed.
+    Repetitive(equality) is defined by less than operator of projected value.
 
     Skip list is a probabilistic data structure by William Pugh.
     It allows average O(log n) read-write and use average O(n) space.
@@ -607,30 +517,29 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
     # Sample structure for a empty (height-1) skip list
     # L0: sentinel (> None)
     #
-    # It's easier to think the sentinel (with key None) as negative infinity,
+    # It's easier to think the sentinel (with val None) as negative infinity,
     # and the None as positive infinity.
     #
     # Invariants:
     # - The head node is always the top left (sentinel) node
     # - Bottom level (L0) always exists, even when container is empty
     # - node.do (down-link) is None for bottom nodes, is not None otherwise
-    # - node.val is not None for bottom (non-sentinel) nodes, is None otherwise
-    # - node.key is None for sentinel nodes, is not None otherwise
+    # - node.val is None for sentinel nodes, is not None otherwise
 
     def __init__(
         self,
-        items: Iterable[tuple[K, V]] = [],
+        items: Iterable[T] = [],
         *,
-        by: Callable[[K], C],
+        key: Callable[[T], C] = lambda x: x,
     ) -> None:
-        self._head: _SkipNode[K, V] = _SkipNode[K, V]()
+        self._head: _Skip[T] = _Skip[T]()
         """head node at top left"""
 
-        self._proj: Callable[[K], C] = by
-        """projection function to compare keys"""
+        self._proj: Callable[[T], C] = key
+        """projection function to compare values"""
 
-        for key, val in items:
-            self.__setitem__(key, val)
+        for item in items:
+            self.add(item)
 
     @staticmethod
     def _random_level() -> int:
@@ -642,16 +551,16 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
         else:
             return level
 
-    def _size_in(self, down: _SkipNode[K, V], bound: K | None) -> int:
+    def _size_in(self, down: _Skip[T], bound: T | None) -> int:
         """Return the size of some tree, by down link and key bound."""
 
-        by = self._proj
+        key = self._proj
         # -inf less than all values, and all values less than +inf
-        is_good = lambda key: key is None or bound is None or by(key) < by(bound)
+        is_good = lambda item: item is None or bound is None or key(item) < key(bound)
 
         size = 0
-        cur: _SkipNode[K, V] | None = down
-        while cur is not None and is_good(cur.key):
+        cur: _Skip[T] | None = down
+        while cur is not None and is_good(cur.val):
             size += cur.size
             cur = cur.ri
 
@@ -675,7 +584,7 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
 
         row = self._head
         for _ in range(self._height(), height):
-            node = _SkipNode[K, V](down=row, size=self._size_in(row, None))
+            node = _Skip[T](down=row, size=self._size_in(row, None))
             row = node
         self._head = row
 
@@ -688,9 +597,9 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
             row = row.do
         self._head = row
 
-    def _traverse(self, key: K) -> tuple[
-        tuple[_SkipNode[K, V], _SkipNode[K, V] | None],
-        dict[int, tuple[_SkipNode[K, V], _SkipNode[K, V] | None]],
+    def _traverse(self, item: T) -> tuple[
+        tuple[_Skip[T], _Skip[T] | None],
+        dict[int, tuple[_Skip[T], _Skip[T] | None]],
     ]:
         """
         Return target-pair at bottom and at each level.
@@ -700,9 +609,9 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
         """
 
         by = self._proj
-        tracked: dict[int, tuple[_SkipNode[K, V], _SkipNode[K, V] | None]] = {}
+        tracked: dict[int, tuple[_Skip[T], _Skip[T] | None]] = {}
         level = self._height() - 1
-        cur: _SkipNode[K, V] | None = self._head
+        cur: _Skip[T] | None = self._head
 
         assert level >= 0
         assert cur is not None
@@ -710,8 +619,8 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
         # Reach the node that have key < target key as much as possible at each level.
         # The sentinel nodes can be thought as node with negative infinity key.
         while cur is not None:
-            nex: _SkipNode[K, V] | None = cur.ri
-            while nex is not None and by(cast(K, nex.key)) < by(key):
+            nex: _Skip[T] | None = cur.ri
+            while nex is not None and by(cast(T, nex.val)) < by(item):
                 cur, nex = nex, nex.ri
             tracked[level] = (cur, cur.ri)
 
@@ -722,40 +631,47 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
 
         return tracked[0], tracked
 
-    def __len__(self) -> int:
+    def size(self) -> int:
+        """Return the number of elements in the container."""
+
         # sentinel node is not counted
         return self._size_in(self._head, None) - 1
 
-    def __iter__(self) -> Iterable[K]:
+    def __len__(self) -> int:
+        return self.size()
+
+    def iter(self) -> Iterator[T]:
+        """Return a iterator to traverse the container."""
+
         row = self._head
         while row.do is not None:
             row = row.do
 
         cur = row.ri  # now at bottom level
         while cur is not None:
-            yield cast(K, cur.key)
+            yield cast(T, cur.val)
             cur = cur.ri
 
-    def __setitem__(self, key: K, val: V) -> None:
-        try:
-            self.__delitem__(key)
-        except KeyError:
-            pass
+    def __iter__(self) -> Iterator[T]:
+        return self.iter()
+
+    def add(self, item) -> None:
+        """Insert an item into the container."""
 
         half = self._random_level() + 1
         self._fill_head(half)
 
-        _, tracked = self._traverse(key)
+        _, tracked = self._traverse(item)
 
-        inserted: dict[int, _SkipNode[K, V]] = {}
+        inserted: dict[int, _Skip[T]] = {}
         for idx in range(half):
             pre, nex = tracked[idx]
 
             down = inserted[idx - 1] if idx > 0 else None
-            hi = nex.key if nex is not None else None
+            hi = nex.val if nex is not None else None
             size = self._size_in(down, hi) if down is not None else 1
 
-            node = _SkipNode[K, V](key, down=down, size=size)
+            node = _Skip[T](item, down=down, size=size)
             pre.ri, node.ri = node, nex
 
             inserted[idx] = node
@@ -764,28 +680,32 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
             splitted = inserted[idx].size if idx in inserted else 0
             pre.size = pre.size + 1 - splitted
 
-        inserted[0].val = val
-
-    def __getitem__(self, key: K) -> V:
-        (_, cur), _ = self._traverse(key)
+    def find(self, item: T) -> T | None:
+        """Return an item from container if there is at least one."""
+        (_, cur), _ = self._traverse(item)
         by = self._proj
 
-        if cur is None or not _eq(by(cast(K, cur.key)), by(key)):
-            raise KeyError("key not found")
+        if cur is None or not _eq(by(cast(T, cur.val)), by(item)):
+            return None
 
         # do not check against None so we support using None as value type V.
-        return cast(V, cur.val)
+        return cast(T, cur.val)
 
-    def __delitem__(self, key: K):
-        (_, cur), tracked = self._traverse(key)
+    def __contains__(self, item: T) -> bool:
+        return self.find(item) is not None
+
+    def remove(self, item: T) -> None:
+        """Remove an item, throws if no such item."""
+
+        (_, cur), tracked = self._traverse(item)
         by = self._proj
 
-        if cur is None or not _eq(by(cast(K, cur.key)), by(key)):
-            raise KeyError("key not found")
+        if cur is None or not _eq(by(cast(T, cur.val)), by(item)):
+            raise ValueError("item not in container")
 
         joined: dict[int, int] = {}
         for idx, (pre, cur) in tracked.items():
-            if cur is None or not _eq(by(cast(K, cur.key)), by(key)):
+            if cur is None or not _eq(by(cast(T, cur.val)), by(item)):
                 joined[idx] = 0
                 continue
             pre.ri = cur.ri
@@ -800,29 +720,18 @@ class SkipListBase[K: Any, V: Any, C: Cmp](MutableMapping[K, V]):
         texts: list[str] = []
         texts.append(f"size: {self.__len__()}, height: {self._height()}")
 
-        def format(row: _SkipNode[K, V]) -> str:
+        def format(row: _Skip[T]) -> str:
             results: list[str] = []
             cur = row.ri
             while cur is not None:
-                results.append(repr(cur.key))
+                results.append(repr(cur.val))
                 cur = cur.ri
             return " ".join(results)
 
-        row: _SkipNode[K, V] | None = self._head
+        row: _Skip[T] | None = self._head
         level = self._height() - 1
         while row is not None:
             texts.append(f"level {level}: {format(row)}")
             row, level = row.do, level - 1
 
         return "\n".join(texts)
-
-
-class SkipList[K: Cmp, V: Any](SkipListBase[K, V, K]):
-    """
-    A simple mapping container by skip list.
-
-    Just like SkipListBase, but compare keys by the key itself directly.
-    """
-
-    def __init__(self, items: Iterable[tuple[K, V]] = []) -> None:
-        super().__init__(items, by=lambda x: x)
