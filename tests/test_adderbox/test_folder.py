@@ -127,6 +127,22 @@ class TestSkipList(unittest.TestCase):
         self.assertEqual(len(pivot), len(items))
         self.assertEqual(sorted(pivot), list(items))
 
+    def test_index_operations(self) -> None:
+        values = range(8)
+        guards = [-1, 8]
+        items = folder.SkipList(values)
+
+        for val in range(8):
+            self.assertEqual(val, items.index(val))
+        for val in guards:
+            with self.assertRaises(ValueError):
+                items.index(val)
+        for idx in values:
+            self.assertEqual(idx, items.at(idx))
+        for idx in guards:
+            with self.assertRaises(IndexError):
+                items.at(idx)
+
     @unittest.skip("for-benchmark")
     def test_query_complexity(self) -> None:
 
