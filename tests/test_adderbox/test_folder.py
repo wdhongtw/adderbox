@@ -61,8 +61,8 @@ class TestFolder(unittest.TestCase):
             tree.remove(val)
         self.assertEqual([0, 0, 1, 1, 2, 3, 6, 7], list(tree))
 
-        self.assertIsNone(tree.find(8))
-        self.assertEqual(2, tree.find(2))
+        self.assertFalse(tree.find(8))
+        self.assertTrue(tree.find(2))
 
 
 class TestSkipList(unittest.TestCase):
