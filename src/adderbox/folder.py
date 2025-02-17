@@ -735,3 +735,49 @@ class SkipList[T: Any, C: Cmp](Collection[T]):
             row, level = row.do, level - 1
 
         return "\n".join(texts)
+
+    def at(self, idx: int) -> T:
+        """Return the item at the given index."""
+
+        def get(cur: _Skip[T] | None, idx: int) -> T:
+            if cur is None:
+                raise IndexError("index out of range")
+            if idx < 0:
+                raise IndexError("index out of range")
+            if idx >= cur.size:
+                return get(cur.ri, idx - cur.size)
+            if idx == 0:
+                return cast(T, cur.val)
+
+            # now idx > 0 and idx < cur.size, so we can safely go down
+            return get(cur.do, idx)
+
+        # sentinel node is not counted
+        if idx == -1:
+            raise IndexError("index out of range")
+        return get(self._head, idx + 1)
+
+    def __getitem__(self, idx: int) -> T:
+        idx = idx if idx >= 0 else idx + len(self)
+        return self.at(idx)
+
+    def index(self, item: T) -> int:
+        """Return the first index of item equal to given item."""
+
+        by = self._proj
+
+        def find(cur: _Skip[T] | None) -> int:
+            if cur is None:
+                raise ValueError("item not in container")
+            if cur.val is not None and _eq(by(cur.val), by(item)):
+                return 0
+            if cur.val is not None and by(item) < by(cur.val):
+                raise ValueError("item not in container")
+            if cur.ri is not None and not by(item) < by(cast(T, cur.ri.val)):
+                return cur.size + find(cur.ri)
+
+            # now item > cur.key and item < cur.ri.key, so we can go down
+            return find(cur.do)
+
+        # sentinel node is not counted
+        return find(self._head) - 1
