@@ -419,10 +419,10 @@ class RbTree[K: Cmp](Container[K], Reversible[K]):
             raise ValueError("item not in container")
         self._root = _rb_del(self._root, item)
 
-    def find(self, item: K) -> K | None:
-        """Return an item if there is at least one equal to given item."""
+    def find(self, item: K) -> bool:
+        """Return if there is at least one equal to given item."""
         node = _rb_member(self._root, item)
-        return None if isinstance(node, _Nil) else node.item
+        return not isinstance(node, _Nil)
 
     def iter(self, reverse: bool = False) -> Iterator[K]:
         """Return a iterator to traverse the tree."""
@@ -680,19 +680,15 @@ class SkipList[T: Any, C: Cmp](Collection[T]):
             splitted = inserted[idx].size if idx in inserted else 0
             pre.size = pre.size + 1 - splitted
 
-    def find(self, item: T) -> T | None:
+    def find(self, item: T) -> bool:
         """Return an item from container if there is at least one."""
         (_, cur), _ = self._traverse(item)
         by = self._proj
 
-        if cur is None or not _eq(by(cast(T, cur.val)), by(item)):
-            return None
-
-        # do not check against None so we support using None as value type V.
-        return cast(T, cur.val)
+        return cur is not None and _eq(by(cast(T, cur.val)), by(item))
 
     def __contains__(self, item: T) -> bool:
-        return self.find(item) is not None
+        return self.find(item)
 
     def remove(self, item: T) -> None:
         """Remove an item, throws if no such item."""
